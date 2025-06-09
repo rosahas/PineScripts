@@ -1,0 +1,143 @@
+//@version=5
+indicator(title="Median & Lower Median Strategy Lines", shorttitle="Median Strategy", overlay=true)
+
+// This is based on OnePercentBatman strategy from Reddit.
+
+// Input groups
+var g_settings = "Median Settings"
+var g_visuals = "Visual Settings"
+var g_alerts = "Alert Settings"
+
+// Median calculation settings
+lookbackPeriod = input.int(252, "Lookback Period (Trading Days)", minval=50, maxval=1000, group=g_settings)
+showMedian = input.bool(true, "Show Median Line", inline="median", group=g_settings)
+showLowerMedian = input.bool(true, "Show Lower Median Line", inline="lower", group=g_settings)
+
+// Color inputs
+medianColor = input.color(color.orange, "", inline="median", group=g_settings)
+lowerMedianColor = input.color(color.purple, "", inline="lower", group=g_settings)
+
+// Visual settings
+showLabels = input.bool(true, "Show Price Labels", group=g_visuals)
+labelOffset = input.int(5, "Label Offset", minval=1, maxval=20, group=g_visuals)
+lineStyle = input.string("Solid", "Line Style", options=["Solid", "Dotted", "Dashed"], group=g_visuals)
+lineWidth = input.int(2, "Line Width", minval=1, maxval=4, group=g_visuals)
+showZones = input.bool(true, "Show Buy Zones", group=g_visuals)
+zoneTransparency = input.int(90, "Zone Transparency", minval=50, maxval=98, group=g_visuals)
+
+// Alert settings
+enableAlerts = input.bool(false, "Enable Price Alerts", group=g_alerts)
+
+// Calculate 52-week high and low
+weekHigh = ta.highest(high, lookbackPeriod)
+weekLow = ta.lowest(low, lookbackPeriod)
+
+// Calculate Median and Lower Median
+median = (weekHigh + weekLow) / 2
+lowerMedian = (weekLow + median) / 2
+
+// Function to format price value for labels
+formatPrice(price) =>
+    str.tostring(price, format.mintick)
+
+// Creates a horizontal line extending to the right
+quickLine(startBar, y, lineColor, lineTransparency = 0) => 
+    line.new(startBar, y, bar_index + 10, y, color=color.new(lineColor, lineTransparency), width=lineWidth)
+
+// Creates a label at the end of the chart
+quickLabel(y, txt, txtColor) => 
+    label.new(bar_index + labelOffset, y, text=txt, color=color.new(color.white, 100), style=label.style_label_left, textcolor=txtColor, size=size.normal)
+
+// Convert line style selection to Pine style
+plotStyle = switch lineStyle
+    "Solid" => plot.style_line
+    "Dotted" => plot.style_circles
+    "Dashed" => plot.style_linebr
+    => plot.style_line
+
+// Plot the median lines
+plot(showMedian ? median : na, color=medianColor, style=plotStyle, title="Median", linewidth=lineWidth)
+plot(showLowerMedian ? lowerMedian : na, color=lowerMedianColor, style=plotStyle, title="Lower Median", linewidth=lineWidth)
+
+// Fill zones for visual reference
+medianZoneTop = plot(showZones ? weekHigh : na, color=color.new(color.white, 100), display=display.none)
+medianZoneBottom = plot(showZones ? median : na, color=color.new(color.white, 100), display=display.none)
+fill(medianZoneTop, medianZoneBottom, color.new(color.red, zoneTransparency), title="Above Median Zone")
+
+buyZoneTop = plot(showZones ? lowerMedian : na, color=color.new(color.white, 100), display=display.none)
+buyZoneBottom = plot(showZones ? weekLow : na, color=color.new(color.white, 100), display=display.none)
+fill(buyZoneTop, buyZoneBottom, color.new(color.green, zoneTransparency), title="Lower Median Buy Zone")
+
+// Create labels and lines on the last bar
+if barstate.islast
+    // Store created objects
+    var line[] lines = array.new_line()
+    var label[] labels = array.new_label()
+    
+    // Clear previous objects
+    if array.size(lines) > 0
+        for i = 0 to array.size(lines) - 1
+            line.delete(array.get(lines, i))
+        array.clear(lines)
+    
+    if array.size(labels) > 0
+        for i = 0 to array.size(labels) - 1
+            label.delete(array.get(labels, i))
+        array.clear(labels)
+    
+    // Create median line and label
+    if showMedian
+        array.push(lines, quickLine(bar_index - 50, median, medianColor, 25))
+        if showLabels
+            medianText = "Median: " + formatPrice(median) + " (H:" + formatPrice(weekHigh) + " L:" + formatPrice(weekLow) + ")"
+            array.push(labels, quickLabel(median, medianText, medianColor))
+    
+    // Create lower median line and label
+    if showLowerMedian
+        array.push(lines, quickLine(bar_index - 50, lowerMedian, lowerMedianColor, 25))
+        if showLabels
+            lowerMedianText = "Lower Median: " + formatPrice(lowerMedian) + " (Buy Zone)"
+            array.push(labels, quickLabel(lowerMedian, lowerMedianText, lowerMedianColor))
+    
+    // Add current price context label
+    if showLabels
+        currentPrice = close
+        var string priceContext = ""
+        
+        if currentPrice > median
+            priceContext := "Above Median - Wait"
+        else if currentPrice > lowerMedian
+            priceContext := "Below Median - Buy Sparingly"
+        else
+            priceContext := "Lower Median Zone - Buy Heavy"
+        
+        contextColor = currentPrice > median ? color.red : (currentPrice > lowerMedian ? color.yellow : color.lime)
+        contextLabel = label.new(bar_index + labelOffset, currentPrice, text="Current: " + formatPrice(currentPrice) + "\n" + priceContext, color=color.new(contextColor, 80), style=label.style_label_left, textcolor=color.white, size=size.normal)
+        array.push(labels, contextLabel)
+
+// Alert conditions (must be at global scope)
+alertcondition(enableAlerts and ta.crossunder(close, median), title="Price Below Median", message="{{ticker}} crossed below median - Consider buying sparingly")
+alertcondition(enableAlerts and ta.crossunder(close, lowerMedian), title="Price in Lower Median Zone", message="{{ticker}} entered lower median zone - Consider buying heavy")
+alertcondition(enableAlerts and ta.crossover(close, median), title="Price Above Median", message="{{ticker}} crossed above median - Consider taking profits")
+
+// Table showing strategy levels
+if barstate.islast and showLabels
+    var table infoTable = table.new(position.top_right, 2, 6, bgcolor=color.new(color.white, 80), border_width=1)
+    
+    table.cell(infoTable, 0, 0, "Level", text_color=color.black, bgcolor=color.new(color.gray, 70))
+    table.cell(infoTable, 1, 0, "Price", text_color=color.black, bgcolor=color.new(color.gray, 70))
+    
+    table.cell(infoTable, 0, 1, "52W High", text_color=color.black)
+    table.cell(infoTable, 1, 1, formatPrice(weekHigh), text_color=color.black)
+    
+    table.cell(infoTable, 0, 2, "Median", text_color=color.black, bgcolor=color.new(medianColor, 80))
+    table.cell(infoTable, 1, 2, formatPrice(median), text_color=color.black, bgcolor=color.new(medianColor, 80))
+    
+    table.cell(infoTable, 0, 3, "Lower Median", text_color=color.black, bgcolor=color.new(lowerMedianColor, 80))
+    table.cell(infoTable, 1, 3, formatPrice(lowerMedian), text_color=color.black, bgcolor=color.new(lowerMedianColor, 80))
+    
+    table.cell(infoTable, 0, 4, "52W Low", text_color=color.black)
+    table.cell(infoTable, 1, 4, formatPrice(weekLow), text_color=color.black)
+    
+    table.cell(infoTable, 0, 5, "Current", text_color=color.white, bgcolor=color.new(color.blue, 50))
+    table.cell(infoTable, 1, 5, formatPrice(close), text_color=color.white, bgcolor=color.new(color.blue, 50))
