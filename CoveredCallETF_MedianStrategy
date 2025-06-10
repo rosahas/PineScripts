@@ -1,12 +1,11 @@
 //@version=5
-indicator(title="Median & Lower Median Strategy Lines", shorttitle="Median Strategy", overlay=true)
-
-// This is based on OnePercentBatman strategy from Reddit.
+indicator(title="Median Strategy with Underlying Analysis", shorttitle="Median Strategy Pro", overlay=true)
 
 // Input groups
 var g_settings = "Median Settings"
 var g_visuals = "Visual Settings"
 var g_alerts = "Alert Settings"
+var g_underlying = "Underlying Analysis"
 
 // Median calculation settings
 lookbackPeriod = input.int(252, "Lookback Period (Trading Days)", minval=50, maxval=1000, group=g_settings)
@@ -19,22 +18,182 @@ lowerMedianColor = input.color(color.purple, "", inline="lower", group=g_setting
 
 // Visual settings
 showLabels = input.bool(true, "Show Price Labels", group=g_visuals)
-labelOffset = input.int(5, "Label Offset", minval=1, maxval=20, group=g_visuals)
+// UPDATED: Increased maxval for labelOffset
+labelOffset = input.int(5, "Label Offset", minval=1, maxval=100, group=g_visuals)
 lineStyle = input.string("Solid", "Line Style", options=["Solid", "Dotted", "Dashed"], group=g_visuals)
 lineWidth = input.int(2, "Line Width", minval=1, maxval=4, group=g_visuals)
 showZones = input.bool(true, "Show Buy Zones", group=g_visuals)
 zoneTransparency = input.int(90, "Zone Transparency", minval=50, maxval=98, group=g_visuals)
 
+// New inputs for Context Label colors
+contextLabelBgColor = input.color(color.new(color.lime, 80), "Context Label BG Color", group=g_visuals) // Default to original buy heavy color
+contextLabelTextColor = input.color(color.black, "Context Label Text Color", group=g_visuals) // Default to black as requested
+
+// Underlying analysis settings
+underlyingLookback = input.int(20, "Underlying Decline Lookback Days", minval=5, maxval=50, group=g_underlying)
+showUnderlyingInfo = input.bool(true, "Show Underlying Analysis", group=g_underlying)
+
 // Alert settings
 enableAlerts = input.bool(false, "Enable Price Alerts", group=g_alerts)
 
-// Calculate 52-week high and low
+// Function to get underlying ticker and type based on current symbol
+getUnderlyingInfo() =>
+    ticker = syminfo.ticker
+    underlying = ""
+    isIndex = false
+    threshold = 0.0
+    
+    // Popular Covered Call ETFs mapping
+    if ticker == "CONY"
+        underlying := "COIN"
+        isIndex := false
+        threshold := 10.0
+    else if ticker == "IMST"
+        underlying := "MSTR"
+        isIndex := false
+        threshold := 10.0
+    else if ticker == "MST"
+        underlying := "MSTR"
+        isIndex := false
+        threshold := 10.0
+    else if ticker == "MSTY"
+        underlying := "MSTR"
+        isIndex := false
+        threshold := 10.0
+    else if ticker == "PLTW"
+        underlying := "PLTR"
+        isIndex := false
+        threshold := 10.0
+    else if ticker == "PLTY"
+        underlying := "PLTR"
+        isIndex := false
+        threshold := 10.0
+    else if ticker == "TSLY"
+        underlying := "TSLA"
+        isIndex := false
+        threshold := 10.0
+    else if ticker == "AMZP"
+        underlying := "AMZN"
+        isIndex := false
+        threshold := 10.0
+    else if ticker == "BITO"
+        underlying := "IBIT"
+        isIndex := false
+        threshold := 10.0
+    else if ticker == "SMCY"
+        underlying := "SCMI"
+        isIndex := false
+        threshold := 10.0
+    else if ticker == "TSLW"
+        underlying := "TSLA"
+        isIndex := false
+        threshold := 10.0
+    else if ticker == "APLY"
+        underlying := "AAPL"
+        isIndex := false
+        threshold := 10.0
+    // TSLY is duplicated in the provided list, already handled above.
+    else if ticker == "NVDY"
+        underlying := "NVDA"
+        isIndex := false
+        threshold := 10.0
+    else if ticker == "MSFO"
+        underlying := "MSFT"
+        isIndex := false
+        threshold := 10.0
+    else if ticker == "AMZY"
+        underlying := "AMZN"
+        isIndex := false
+        threshold := 10.0
+    else if ticker == "GOOY"
+        underlying := "GOOGL"
+        isIndex := false
+        threshold := 10.0
+    else if ticker == "JEPI"
+        underlying := "SPY"
+        isIndex := true
+        threshold := 3.0
+    else if ticker == "JEPQ"
+        underlying := "QQQ"
+        isIndex := true
+        threshold := 3.0
+    else if ticker == "QDTE"
+        underlying := "QQQ"
+        isIndex := true
+        threshold := 3.0
+    else if ticker == "QQQT"
+        underlying := "QQQ"
+        isIndex := true
+        threshold := 3.0
+    else if ticker == "SPYI"
+        underlying := "SPY"
+        isIndex := true
+        threshold := 3.0
+    else if ticker == "SPYG"
+        underlying := "SPY"
+        isIndex := true
+        threshold := 3.0
+    else if ticker == "IWMY"
+        underlying := "IWM"
+        isIndex := true
+        threshold := 3.0
+    else if ticker == "DIVO"
+        underlying := "SPY"
+        isIndex := true
+        threshold := 3.0
+    else if ticker == "JEPY"
+        underlying := "SPY"
+        isIndex := true
+        threshold := 3.0
+    else if ticker == "XYLG"
+        underlying := "SPY"
+        isIndex := true
+        threshold := 3.0
+    else if ticker == "XYLD"
+        underlying := "SPY"
+        isIndex := true
+        threshold := 3.0
+    else if ticker == "RYLD"
+        underlying := "IWM"
+        isIndex := true
+        threshold := 3.0
+    else if ticker == "QYLD"
+        underlying := "QQQ"
+        isIndex := true
+        threshold := 3.0
+    else
+        // Default fallback - treat as individual stock (or SPY if no match)
+        underlying := "SPY"
+        isIndex := true
+        threshold := 3.0
+    
+    [underlying, isIndex, threshold]
+
+// Get underlying information
+[underlyingTicker, isIndexUnderlying, declineThreshold] = getUnderlyingInfo()
+
+// Calculate ETF median levels
 weekHigh = ta.highest(high, lookbackPeriod)
 weekLow = ta.lowest(low, lookbackPeriod)
-
-// Calculate Median and Lower Median
 median = (weekHigh + weekLow) / 2
 lowerMedian = (weekLow + median) / 2
+
+// Get underlying asset data
+underlyingClose = request.security(underlyingTicker, timeframe.period, close)
+underlyingHigh = request.security(underlyingTicker, timeframe.period, ta.highest(high, underlyingLookback))
+
+// Calculate underlying decline percentage
+underlyingDecline = ((underlyingHigh - underlyingClose) / underlyingHigh) * 100
+underlyingMeetsThreshold = underlyingDecline >= declineThreshold
+
+// Determine buy signal strength
+inLowerMedianZone = close <= lowerMedian
+belowMedian = close <= median and close > lowerMedian
+aboveMedian = close > median
+
+// Buy Heavy signal: In lower median zone AND underlying meets decline threshold
+buyHeavySignal = inLowerMedianZone and underlyingMeetsThreshold
+buySparinglySignal = belowMedian and not aboveMedian
 
 // Function to format price value for labels
 formatPrice(price) =>
@@ -64,9 +223,11 @@ medianZoneTop = plot(showZones ? weekHigh : na, color=color.new(color.white, 100
 medianZoneBottom = plot(showZones ? median : na, color=color.new(color.white, 100), display=display.none)
 fill(medianZoneTop, medianZoneBottom, color.new(color.red, zoneTransparency), title="Above Median Zone")
 
+// Color-code the lower median zone based on underlying performance
+lowerZoneColor = buyHeavySignal ? color.new(color.lime, zoneTransparency) : color.new(color.yellow, zoneTransparency)
 buyZoneTop = plot(showZones ? lowerMedian : na, color=color.new(color.white, 100), display=display.none)
 buyZoneBottom = plot(showZones ? weekLow : na, color=color.new(color.white, 100), display=display.none)
-fill(buyZoneTop, buyZoneBottom, color.new(color.green, zoneTransparency), title="Lower Median Buy Zone")
+fill(buyZoneTop, buyZoneBottom, lowerZoneColor, title="Lower Median Zone")
 
 // Create labels and lines on the last bar
 if barstate.islast
@@ -89,40 +250,70 @@ if barstate.islast
     if showMedian
         array.push(lines, quickLine(bar_index - 50, median, medianColor, 25))
         if showLabels
-            medianText = "Median: " + formatPrice(median) + " (H:" + formatPrice(weekHigh) + " L:" + formatPrice(weekLow) + ")"
+            medianText = "Median: " + formatPrice(median)
             array.push(labels, quickLabel(median, medianText, medianColor))
     
     // Create lower median line and label
     if showLowerMedian
         array.push(lines, quickLine(bar_index - 50, lowerMedian, lowerMedianColor, 25))
         if showLabels
-            lowerMedianText = "Lower Median: " + formatPrice(lowerMedian) + " (Buy Zone)"
+            lowerMedianText = "Lower Median: " + formatPrice(lowerMedian)
             array.push(labels, quickLabel(lowerMedian, lowerMedianText, lowerMedianColor))
     
-    // Add current price context label
+    // Add current price context label with underlying analysis
     if showLabels
         currentPrice = close
         var string priceContext = ""
+        var string underlyingContext = ""
         
-        if currentPrice > median
-            priceContext := "Above Median - Wait"
-        else if currentPrice > lowerMedian
+        // Price context
+        if aboveMedian
+            priceContext := "Above Median - WAIT"
+        else if belowMedian
             priceContext := "Below Median - Buy Sparingly"
         else
-            priceContext := "Lower Median Zone - Buy Heavy"
+            priceContext := "Lower Median Zone"
         
-        contextColor = currentPrice > median ? color.red : (currentPrice > lowerMedian ? color.yellow : color.lime)
-        contextLabel = label.new(bar_index + labelOffset, currentPrice, text="Current: " + formatPrice(currentPrice) + "\n" + priceContext, color=color.new(contextColor, 80), style=label.style_label_left, textcolor=color.white, size=size.normal)
+        // Underlying context
+        if showUnderlyingInfo
+            underlyingType = isIndexUnderlying ? "Index" : "Stock"
+            if underlyingMeetsThreshold
+                underlyingContext := underlyingTicker + " (" + underlyingType + ") -" + str.tostring(underlyingDecline, "#.##") + "% ✓"
+            else
+                underlyingContext := underlyingTicker + " (" + underlyingType + ") -" + str.tostring(declineThreshold, "#") + "%+)"
+        
+        // Final recommendation
+        var string recommendation = ""
+        if buyHeavySignal
+            recommendation := "🚀 BUY HEAVY (YOLO Zone!)"
+        else if buySparinglySignal
+            recommendation := "💰 Buy Sparingly"
+        else if aboveMedian
+            recommendation := "⏳ Wait for Better Entry"
+        else if inLowerMedianZone and not underlyingMeetsThreshold
+            recommendation := "⚠️ Lower Zone but Underlying Not Down Enough"
+        
+        // contextColor is still calculated but not directly used for contextLabel's background in this updated version.
+        // It remains for potential future uses or if the user wants to revert to dynamic background.
+        // contextColor = buyHeavySignal ? color.lime : (buySparinglySignal ? color.yellow : color.red)
+        
+        labelText = "Current: " + formatPrice(currentPrice) + "\n" + priceContext
+        if showUnderlyingInfo
+            labelText += "\n" + underlyingContext
+        labelText += "\n" + recommendation
+        
+        // Use the new input colors for the context label
+        contextLabel = label.new(bar_index + labelOffset, currentPrice, text=labelText, color=contextLabelBgColor, style=label.style_label_left, textcolor=contextLabelTextColor, size=size.normal)
         array.push(labels, contextLabel)
 
 // Alert conditions (must be at global scope)
 alertcondition(enableAlerts and ta.crossunder(close, median), title="Price Below Median", message="{{ticker}} crossed below median - Consider buying sparingly")
-alertcondition(enableAlerts and ta.crossunder(close, lowerMedian), title="Price in Lower Median Zone", message="{{ticker}} entered lower median zone - Consider buying heavy")
+alertcondition(enableAlerts and buyHeavySignal, title="BUY HEAVY Signal", message="{{ticker}} in lower median zone AND underlying is down - YOLO TIME!")
 alertcondition(enableAlerts and ta.crossover(close, median), title="Price Above Median", message="{{ticker}} crossed above median - Consider taking profits")
 
-// Table showing strategy levels
+// Enhanced table showing strategy levels and underlying analysis
 if barstate.islast and showLabels
-    var table infoTable = table.new(position.top_right, 2, 6, bgcolor=color.new(color.white, 80), border_width=1)
+    var table infoTable = table.new(position.top_right, 2, 8, bgcolor=color.new(color.white, 80), border_width=1)
     
     table.cell(infoTable, 0, 0, "Level", text_color=color.black, bgcolor=color.new(color.gray, 70))
     table.cell(infoTable, 1, 0, "Price", text_color=color.black, bgcolor=color.new(color.gray, 70))
@@ -133,6 +324,7 @@ if barstate.islast and showLabels
     table.cell(infoTable, 0, 2, "Median", text_color=color.black, bgcolor=color.new(medianColor, 80))
     table.cell(infoTable, 1, 2, formatPrice(median), text_color=color.black, bgcolor=color.new(medianColor, 80))
     
+    // This is the line reported as having an error
     table.cell(infoTable, 0, 3, "Lower Median", text_color=color.black, bgcolor=color.new(lowerMedianColor, 80))
     table.cell(infoTable, 1, 3, formatPrice(lowerMedian), text_color=color.black, bgcolor=color.new(lowerMedianColor, 80))
     
@@ -141,3 +333,11 @@ if barstate.islast and showLabels
     
     table.cell(infoTable, 0, 5, "Current", text_color=color.white, bgcolor=color.new(color.blue, 50))
     table.cell(infoTable, 1, 5, formatPrice(close), text_color=color.white, bgcolor=color.new(color.blue, 50))
+    
+    if showUnderlyingInfo
+        underlyingBgColor = underlyingMeetsThreshold ? color.new(color.green, 50) : color.new(color.red, 50)
+        table.cell(infoTable, 0, 6, "Underlying", text_color=color.white, bgcolor=underlyingBgColor)
+        table.cell(infoTable, 1, 6, underlyingTicker, text_color=color.white, bgcolor=underlyingBgColor)
+        
+        table.cell(infoTable, 0, 7, "Decline", text_color=color.white, bgcolor=underlyingBgColor)
+        table.cell(infoTable, 1, 7, str.tostring(underlyingDecline, "#.##") + "%", text_color=color.white, bgcolor=underlyingBgColor)
